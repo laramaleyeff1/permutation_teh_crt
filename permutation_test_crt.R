@@ -83,12 +83,12 @@ getSKS <- function(Y, W) {
 #                       k         vector with numeric cluster membership
 #                       te.vec    vector that spans the confidence interval for
 #                                 the average treatment effect
-#                       R         number permutation samples, defaults to 1000
+#                       R         number permutation samples, defaults to 2000
 #                       test.stat test statistic function, defaults to getSKS
 # Returns:              A list with the p-values for each
 #                       entry of te.vec, p.value.ci.all
 #
-generatePermutations <- function(Y, W, k, te.vec, R = 1000, test.stat = getSKS) {
+generatePermutations <- function(Y, W, k, te.vec, R = 2000, test.stat = getSKS) {
   Y0.mat = sapply(te.vec, function(te) Y-W*te)
   Y1.mat = sapply(te.vec, function(te) Y+(1-W)*te)
   
@@ -138,7 +138,7 @@ generatePermutations <- function(Y, W, k, te.vec, R = 1000, test.stat = getSKS) 
 #                                 unadjusted can set X=NA (default)
 #                       adj       boolean indicating if test is GAMM-adjusted,
 #                                 defaults to FALSE
-#                       R         number permutation samples, defaults to 1000
+#                       R         number permutation samples, defaults to 2000
 #                       gamma     Confidence interval (CI) precision, defaults 
 #                                 to 0.0001
 #                       grid.size numeric value indicating grid size for CI 
@@ -155,21 +155,25 @@ generatePermutations <- function(Y, W, k, te.vec, R = 1000, test.stat = getSKS) 
 #             $p.value.pi
 #             [1] 0.4546455
 #
-runPermutationTest <- function(Y, W, k, X = NA, adj = FALSE,
-                               R = 1000, gamma = 0.0001, grid.size = 151, 
+runPermutationTest <- function(Y, W, k, X.cont = NA, X.bin = NA, adj = FALSE,
+                               R = 2000, gamma = 0.0001, grid.size = 151, 
                                test.stat = getSKS) {
   
   if (adj) {
     k.ctrl = k[W==0]
-    X.ctrl = X[W==0,]
-    formula = paste0("Y.ctrl ~", paste0("s(", names(X.ctrl), ")",collapse="+"))
+    X.cont.ctrl = X.cont[W==0,]
+    X.bin.ctrl = X.bin[W==0,]
+    formula = paste0("Y.ctrl ~", paste0("s(", names(X.cont.ctrl), ")",collapse="+"), " + ", 
+                     paste0(names(X.bin.ctrl),collapse="+"))
     model.gamm = mgcv::gamm(as.formula(formula), list(k.ctrl=~1),
-                            data=cbind(X.ctrl, data.frame(k.ctrl, Y.ctrl = Y[W==0])))
-    Y.pred = predict.gam(model.gamm$gam, X)
+                            data=cbind(X.cont.ctrl, X.bin.ctrl, data.frame(k.ctrl, Y.ctrl = Y[W==0])))
+    
+    Y.pred = predict.gam(model.gamm$gam, cbind(X.cont,X.bin))
     Y.resids = Y - Y.pred
     
-    formula = paste0("Y ~ W +", paste0("bs(", names(X), ")",collapse="+"))
-    ate.model <- geese(as.formula(formula), id=k,data=cbind(X,data.frame(k,Y)))
+    formula = paste0("Y ~ W +", paste0("bs(", names(X.cont), ")",collapse="+"), " + ",
+                     paste0(names(X.bin),collapse="+"))
+    ate.model <- geese(as.formula(formula), id=k,data=cbind(X.cont,X.bin,data.frame(k,Y)))
     
     te.vec <- getTeVec(ate.model[["beta"]][["W"]],
                          as.numeric(sqrt(ate.model$vbeta[2,2])),
@@ -192,65 +196,3 @@ runPermutationTest <- function(Y, W, k, X = NA, adj = FALSE,
   list(p.value.ci = p.value,
        p.value.pi = p.value.ci.all[(grid.size+1)/2])
 }
-
-# Example of running the permutation test on simulated data
-#
-# k.max:        number of clusters
-# n.per:        (average) number of individuals per cluster
-# sd.n.per:     standard deviation of cluster size, 0 = equally sized clusters
-# p.trt:        proportion of treated clusters
-# icc.x:        covariate icc
-# sigma.x.sq:   covariate variance
-# mu.x:         covariate mean
-# sigma.eps.sq: individual-level heterogeneity
-# icc.y:        outcome icc
-#
-k.max = 10
-n.per = 20
-sd.n.per = 0
-p.trt = 0.5
-icc.x = 0.01
-sigma.x.sq = 1
-mu.x = 0
-sigma.eps.sq = 1
-icc.y = 0.1
-count = rnorm(k.max, n.per, sd.n.per)
-freq.table = data.frame(k = rep(1:k.max),
-                        W = sample(rep(0:1,each=p.trt*k.max)))
-freq.table$count = count
-data = freq.table[rep(1:nrow(freq.table), freq.table[["count"]]), -3]
-
-nu.k <- rnorm(k.max, 0,sqrt(icc.x*sigma.x.sq))
-data$X_1 <- mu.x +  apply(data,
-                        1,
-                        function(x) {
-                          # Random effect for cluster
-                          nu.k[as.numeric(x["k"])]
-                        }) +
-  rnorm(nrow(data),0,sqrt((1-icc.x)*sigma.x.sq))
-
-data$X_2 <- mu.x +  apply(data,
-                        1,
-                        function(x) {
-                          # Random effect for cluster
-                          nu.k[as.numeric(x["k"])]
-                        }) +
-  rnorm(nrow(data),0,sqrt((1-icc.x)*sigma.x.sq))
-
-sigma.cl.sq = sigma.eps.sq*(icc.y/(1-icc.y))
-group.ranef <- rnorm(k.max,0,sqrt(sigma.cl.sq))
-data$Y <- data$X_1 + sin(data$X_1) +
-  apply(data,
-        1,
-        function(x) {
-          # Random effect for cluster 
-          group.ranef[as.numeric(x["k"])]
-        }) +
-  rnorm(nrow(data),0,sqrt(sigma.eps.sq))
-
-# Unadjusted test
-runPermutationTest(data$Y, data$W, data$k)
-
-# Adjusted test
-runPermutationTest(data$Y, data$W, data$k, data[,c("X_1","X_2")], adj = TRUE)
-
