@@ -35,6 +35,10 @@ data_12_cov = data %>%
                 ) %>%
   na.omit()
 
+
+# 
+# Permutation test analysis
+#
 X = data_12_cov[,-c(1,2,3)]
 set.seed(1234)
 perm.test.adj = runPermutationTest(data_12_cov$PEGS,data_12_cov$INTERVENTION, data_12_cov$CLUST, 
@@ -58,6 +62,9 @@ perm.test.unadj
 # [1] 0.0170915
 
 
+# 
+# Likelihood ratio test analysis
+#
 model_null <- lmer(PEGS ~ INTERVENTION + AGE + FEMALE + disable +
                      Current_Smoke + BMI + Alcohol_Abuse +
                      Drug_Abuse  + Diabetes +
