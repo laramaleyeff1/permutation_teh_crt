@@ -18,7 +18,8 @@
 This project contains the supporting R code for “Permutation tests for detecting treatment effect heterogeneity in cluster randomized trials”. 
 
     .        
-    ├── permutation_test_crt.R
+    ├── permutation_test_crt.R:    Code to run permutation test
+    ├── ppact_analysis.R:          Code to re-create data example in paper
     └── README.md
 
 
