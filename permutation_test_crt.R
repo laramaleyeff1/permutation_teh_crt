@@ -3,9 +3,12 @@ library(geepack)
 library(splines)
 library(dplyr)
 
-#
-# Credit to Ding et al. (2016) for the first two helper functions
-#
+######################################################################################################
+#           Set of functions to run permutation test described in Maleyeff et al. (2024).            #
+#     Author: Lara Maleyeff, with credit to Ding et al. (2016) for the first two helper functions    #
+#                                   Contact: laramaleyeff@gmail.com                                  #
+#                                          Date: November 2023                                       # 
+######################################################################################################
 
 #
 # function getTeVec
@@ -134,7 +137,9 @@ generatePermutations <- function(Y, W, k, te.vec, R = 2000, test.stat = getSKS) 
 # Parameters:           Y         vector of continuous outcome values
 #                       W         vector of treatment indicators
 #                       k         vector with numeric cluster membership
-#                       X         named matrix of baseline covariates, if 
+#                       X.cont    named matrix of baseline continuous covariates, if 
+#                                 unadjusted can set X=NA (default)
+#                       X.bin     named matrix of baseline binary covariates, if 
 #                                 unadjusted can set X=NA (default)
 #                       adj       boolean indicating if test is GAMM-adjusted,
 #                                 defaults to FALSE
