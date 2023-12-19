@@ -2,6 +2,7 @@ library(haven)
 library(dplyr)
 library(lme4)
 library(xtable)
+library(hettx)
 
 R = 2000
 
@@ -35,6 +36,28 @@ data_12_cov = data %>%
                 ) %>%
   na.omit()
 
+data_12_cov_cl_level = data_12_cov %>%
+  group_by(CLUST) %>%
+  summarise_at(vars(-group_cols()), mean) %>%
+  ungroup()
+
+set.seed(123)
+ding_unadj = detect_idiosyncratic(PEGS ~ INTERVENTION, data_12_cov_cl_level, B=2000)
+# FRT CI Test for Treatment Effect Heterogeneity 
+# Statistic P-Value (Sweep) P-Value (Plug-In)
+# 1 0.1320755          0.4946            0.4356
+
+formula = paste0("PEGS ~ ", paste(names(data_12_cov_cl_level)[-c(1:3)],collapse = "+"))
+set.seed(123)
+model <- lm(as.formula(formula),data = data_12_cov_cl_level[data_12_cov_cl_level$INTERVENTION==0,])
+mod_mat = model.matrix(as.formula(formula), data=data_12_cov_cl_level)
+data_12_cov_cl_level$resids = c(data_12_cov_cl_level$PEGS - mod_mat %*% coef(model))
+
+ding_adj = detect_idiosyncratic(resids ~ INTERVENTION, 
+                                data_12_cov_cl_level, B=2000)
+# FRT CI Test for Treatment Effect Heterogeneity 
+# Statistic P-Value (Sweep) P-Value (Plug-In)
+# 1 0.2264151          0.0321            0.0236
 
 # 
 # Permutation test analysis
