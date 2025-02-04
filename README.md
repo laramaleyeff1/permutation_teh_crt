@@ -20,6 +20,7 @@ This project contains the supporting R code for “Permutation tests for detecti
     .        
     ├── permutation_test_crt.R:    Code to run permutation test
     ├── ppact_analysis.R:          Code to re-create data example in paper
+    ├── simulation_study.R:        Code to run simulation study
     └── README.md
 
 
