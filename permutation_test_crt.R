@@ -72,22 +72,27 @@ getSKS <- function(Y, W, k, X.cont, X.bin) {
   return(max(abs(difference)))
 }
 
-
+#' Compute the Adjusted SKS Test Statistic
+#'
+#' This function computes a variant of the Kolmogorov-Smirnov (KS) statistic 
+#' to test for differences in the distribution of outcomes between treated and 
+#' control groups, adjusting for covariates using a GAM fit on the control group.
+#' 
+#' @param Y A numeric vector of outcomes.
+#' @param W A binary vector of treatment indicators (1 = treated, 0 = control).
+#' @param k A vector of strata/grouping identifiers, not used in the model fit but included for consistency.
+#' @param X.cont A data.frame of continuous covariates to be modeled using smooth terms in the GAM.
+#' @param X.bin A data.frame of binary covariates to be modeled as linear terms in the GAM.
+#'
+#' @return The maximum absolute difference in empirical CDFs of residualized outcomes
+#'         between treated and control units (adjusted SKS statistic).
+#'
 getSKSAdj <- function(Y, W, k, X.cont, X.bin) {
   Y1 = Y[W==1]
   Y0 = Y[W==0]
   
-  # safe_gamm <- function(...) {
-  #   tryCatch({
-  #     mgcv::gamm(...)
-  #   }, error = function(e) {
-  #     print("error")
-  #     warning("GAMM failed to converge:", conditionMessage(e))
-  #     return(NA)
-  #   })
-  # }
   
-  formula_terms <- c()  # Always include W
+  formula_terms <- c()
   
   # Add smooth terms if X.cont is not NULL
   if (!is.null(X.cont)) {
