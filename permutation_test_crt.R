@@ -55,12 +55,66 @@ getTeVec <- function(te.hat, te.se, gamma = 0.0001, grid.size = 151) {
 #           > getSKS(data$Y, data$W)
 #             [1] 0.09
 #
-getSKS <- function(Y, W) {
+getSKS <- function(Y, W, k, X.cont, X.bin) {
   Y1 = Y[W==1]
   Y0 = Y[W==0]
   
   Y1.star   = Y1 - mean(Y1)
   Y0.star   = Y0 - mean(Y0)
+  
+  unique.points = c(Y1.star, Y0.star)
+  
+  Fn1 = ecdf(Y1.star)
+  Fn0 = ecdf(Y0.star)
+  
+  difference = Fn1(unique.points) - Fn0(unique.points)
+  
+  return(max(abs(difference)))
+}
+
+
+getSKSAdj <- function(Y, W, k, X.cont, X.bin) {
+  Y1 = Y[W==1]
+  Y0 = Y[W==0]
+  
+  # safe_gamm <- function(...) {
+  #   tryCatch({
+  #     mgcv::gamm(...)
+  #   }, error = function(e) {
+  #     print("error")
+  #     warning("GAMM failed to converge:", conditionMessage(e))
+  #     return(NA)
+  #   })
+  # }
+  
+  formula_terms <- c()  # Always include W
+  
+  # Add smooth terms if X.cont is not NULL
+  if (!is.null(X.cont)) {
+    smooth_terms <- paste0("s(", names(X.cont), ")")
+    formula_terms <- c(formula_terms, smooth_terms)
+  }
+  
+  # Add binary terms if X.bin is not NULL
+  if (!is.null(X.bin)) {
+    binary_terms <- names(X.bin)
+    formula_terms <- c(formula_terms, binary_terms)
+  }
+  
+  # Combine into formula string
+  formula_str <- paste("Y ~", paste(formula_terms, collapse = " + "))
+  
+  # model.gamm = mgcv::gam(as.formula(formula_str), list(k=~1),
+  #                         data=cbind(X.cont, X.bin, data.frame(W, k, Y)))
+  
+  model.gamm = mgcv::gam(as.formula(formula_str),
+                         data=cbind(X.cont, X.bin, data.frame(k, Y))[W==0,])
+
+  Y.pred = predict.gam(model.gamm, cbind(X.cont,X.bin))
+  Y1.resids = Y1 - Y.pred[W==1]
+  Y0.resids = Y0 - Y.pred[W==0]
+  Y1.star   = Y1.resids - mean(Y1.resids)
+  Y0.star   = Y0.resids - mean(Y0.resids)
   
   unique.points = c(Y1.star, Y0.star)
   
@@ -91,7 +145,7 @@ getSKS <- function(Y, W) {
 # Returns:              A list with the p-values for each
 #                       entry of te.vec, p.value.ci.all
 #
-generatePermutations <- function(Y, W, k, te.vec, R = 2000, test.stat = getSKS) {
+generatePermutations <- function(Y, W, k, X.cont, X.bin, te.vec, R = 2000, test.stat = getSKS) {
   Y0.mat = sapply(te.vec, function(te) Y-W*te)
   Y1.mat = sapply(te.vec, function(te) Y+(1-W)*te)
   
@@ -102,14 +156,14 @@ generatePermutations <- function(Y, W, k, te.vec, R = 2000, test.stat = getSKS) 
   n.te.vec <- ncol(Y0.mat)
   
   teststat.mat <- matrix(NA, nrow = R, ncol = n.te.vec)
-  teststat.obs <- test.stat(Y, W)
+  teststat.obs <- test.stat(Y, W, k, X.cont, X.bin)
   
   for(r in 1:R){
     W.perm = rep(sample(data.byk$W), data.byk$n)
     ci.out <- sapply(1:n.te.vec, 
                      function(i){ 
                        Y.perm = W.perm*Y1.mat[,i] + (1-W.perm)*Y0.mat[,i]
-                       teststat.star <- test.stat(Y.perm, W.perm)
+                       teststat.star <- test.stat(Y.perm, W.perm, k, X.cont, X.bin)
                        teststat.star
                      })  
     
@@ -162,42 +216,58 @@ generatePermutations <- function(Y, W, k, te.vec, R = 2000, test.stat = getSKS) 
 #
 runPermutationTest <- function(Y, W, k, X.cont = NA, X.bin = NA, adj = FALSE,
                                R = 2000, gamma = 0.0001, grid.size = 151, 
-                               test.stat = getSKS) {
+                               test.stat = getSKS, truth = NA) {
   
   if (adj) {
-    k.ctrl = k[W==0]
-    X.cont.ctrl = X.cont[W==0,]
-    X.bin.ctrl = X.bin[W==0,]
-    formula = paste0("Y.ctrl ~", paste0("s(", names(X.cont.ctrl), ")",collapse="+"), " + ", 
-                     paste0(names(X.bin.ctrl),collapse="+"))
-    model.gamm = mgcv::gamm(as.formula(formula), list(k.ctrl=~1),
-                            data=cbind(X.cont.ctrl, X.bin.ctrl, data.frame(k.ctrl, Y.ctrl = Y[W==0])))
+    formula_terms <- c("W")  # Always include W
     
-    Y.pred = predict.gam(model.gamm$gam, cbind(X.cont,X.bin))
-    Y.resids = Y - Y.pred
+    # Add smooth terms if X.cont is not NULL
+    if (!is.null(X.cont)) {
+      smooth_terms <- paste0("bs(", names(X.cont), ")")
+      formula_terms <- c(formula_terms, smooth_terms)
+    }
     
-    formula = paste0("Y ~ W +", paste0("bs(", names(X.cont), ")",collapse="+"), " + ",
-                     paste0(names(X.bin),collapse="+"))
-    ate.model <- geese(as.formula(formula), id=k,data=cbind(X.cont,X.bin,data.frame(k,Y)))
+    # Add binary terms if X.bin is not NULL
+    if (!is.null(X.bin)) {
+      binary_terms <- names(X.bin)
+      formula_terms <- c(formula_terms, binary_terms)
+    }
+    
+    # Combine into formula string
+    formula_str <- paste("Y ~", paste(formula_terms, collapse = " + "))
+    ate.model <- geese(as.formula(formula_str), id=k,data=cbind(X.cont,X.bin,data.frame(k,Y)))
     
     te.vec <- getTeVec(ate.model[["beta"]][["W"]],
-                         as.numeric(sqrt(ate.model$vbeta[2,2])),
-                         gamma, grid.size)
+                       as.numeric(sqrt(ate.model$vbeta[2,2])),
+                       gamma, grid.size)
     
-    permutation.dist <- generatePermutations(Y.resids, W, k, te.vec, R, test.stat)
+    permutation.dist <- generatePermutations(Y, W, k, X.cont, X.bin, te.vec, R, test.stat)
   } else {
     ate.model <- geese(Y ~ W, id=k)
     te.vec <- getTeVec(ate.model[["beta"]][["W"]],
                          as.numeric(sqrt(ate.model$vbeta[2,2])),
                          gamma, grid.size)
-
-    permutation.dist <- generatePermutations(Y, W, k, te.vec, R, test.stat)
+    if (!is.na(truth)) {
+      te.vec = c(truth,te.vec)
+    }
+    permutation.dist <- generatePermutations(Y, W, k, X.cont, X.bin, te.vec, R, test.stat)
   }
  
-  
-  p.value.ci.all = permutation.dist$p.value.ci.all + gamma
-  p.value = max(p.value.ci.all)
-  
-  list(p.value.ci = p.value,
-       p.value.pi = p.value.ci.all[(grid.size+1)/2])
+  if (!is.na(truth)) {
+    p.value.ci.all = permutation.dist$p.value.ci.all[-1] + gamma
+    p.value = max(p.value.ci.all)
+    
+    return(list(p.value.ci = p.value,
+                p.value.pi = p.value.ci.all[(grid.size+1)/2],
+                p.value.truth = permutation.dist$p.value.ci.all[1]))
+    
+  } else {
+    p.value.ci.all = permutation.dist$p.value.ci.all + gamma
+    p.value = max(p.value.ci.all)
+    
+    return(list(p.value.ci = p.value,
+                p.value.pi = p.value.ci.all[(grid.size+1)/2]))
+  }
+ 
 }
+

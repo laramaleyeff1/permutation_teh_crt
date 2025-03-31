@@ -1,3 +1,13 @@
+start_time = Sys.time()
+
+library(foreach)
+library(dplyr)
+library(geepack)
+library(mgcv)
+library(stats)
+library(lme4)
+library(lmerTest)
+library(splines)
 # ====================================================
 # Simulation Parameters and Setup (Table 4 Rows 1-8)
 # ====================================================
@@ -22,7 +32,7 @@ mu_x <- 0  # Mean of covariates
 sigma_x_sq <- 1  # Variance of covariates
 sd_n_per <- 0  # Standard deviation for per-cluster sample size
 gamma <- 0.0001  # Regularization parameter
-grid.size <- 151  # Grid size for numerical integration
+grid.size <- 51  # Grid size for numerical integration
 
 # Load necessary helper functions
 source("permutation_test_crt.R")
@@ -127,12 +137,12 @@ one_iter <- function(k_max, n_per, sd_n_per, p_trt, scenario, Delta.mean,
   # ====================================================
 
   # Unadjusted permutation test
-  perm.test.unadj <- runPermutationTest(data$Y_obs, data$W, data$k, R = R, truth = Delta.mean)
+  perm.test.unadj <- runPermutationTest(data$Y_obs, data$W, data$k, R = R, grid.size = grid.size, truth = Delta.mean)
 
   # Adjusted permutation test (controlling for covariates)
   perm.test.adj <- runPermutationTest(data$Y_obs, data$W, data$k,
                                       data[, c("X_1", "X_2")], X.bin = NA,
-                                      adj = TRUE, R = R, truth = Delta.mean)
+                                      adj = TRUE, R = R, truth = Delta.mean, grid.size = grid.size, test.stat=getSKSAdj)
 
   # ====================================================
   # Likelihood Ratio Tests for Interaction Effects
@@ -184,14 +194,8 @@ one_run <- function() {
   return(ret)
 }
 
-# ====================================================
-# Parallel Execution Setup
-# ====================================================
-
-registerDoParallel(cores = 10)
-
-# Run simulations in parallel
-out <- foreach(iter = 1:10, .combine = rbind) %dopar% one_run()
+# Run simulations
+out <- foreach(iter = 1:10, .combine = rbind) %do% one_run()
 
 # Store execution time
 end_time <- Sys.time()
@@ -204,7 +208,7 @@ out$R <- R
 
 setwd("results")
 
-out.name <- paste0("splines_p3_power_sims_", n_per, "_", k_max, "_", R, "_",
+out.name <- paste0("power_sims_", n_per, "_", k_max, "_", R, "_",
                    Delta.sd.scale, "_", index, ".csv")
 
 write.csv(out, out.name, row.names = FALSE)

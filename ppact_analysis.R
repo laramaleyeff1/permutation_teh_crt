@@ -98,12 +98,17 @@ set.seed(1234)
 perm.test.adj = runPermutationTest(data_12_cov$PEGS,
                                    data_12_cov$INTERVENTION,
                                    data_12_cov$CLUST,
-                                   data_12_cov[,c("AGE", "BL_avg_daily")],
-                                   data_12_cov[,c("disable",
-                                                  "Diabetes",
-                                                  "Hypertension",
-                                                  paste0("pain",c(3,5,11))
-                                   )], adj=TRUE, R=R)
+                                   data_12_cov[,c("AGE","BMI","BL_avg_daily")],
+                                   data_12_cov[,c("FEMALE", "disable", "Current_Smoke",
+                                           "Alcohol_Abuse", "Drug_Abuse", "Diabetes",
+                                           "CVD","Hypertension", "Pulmonary",
+                                           "Dep_OR_Anx", paste0("pain",1:11),
+                                           "BL_benzo_flag"
+                                   )],
+                                   adj = TRUE,
+                                   R = R,
+                                   grid.size = 51,
+                                   test.stat = getSKSAdj)
 
 set.seed(5678)
 perm.test.unadj = runPermutationTest(data_12_cov$PEGS,
@@ -186,16 +191,44 @@ model_null_spline <- lmer(
 # Perform likelihood ratio test
 anova(model_full_spline, model_null_spline)
 
-# Stepwise selection to identify key predictors for adjustment in permutation test
-step(model_full_spline, direction = "backward", reduce.random = FALSE)
-
-
 
 # ====================================================
 # Ad-hoc analysis to detect source of heterogeneity
 # ====================================================
 
-# Scale continuous covariates
+cov_names <- c(
+  "Age, y",
+  "Sex",
+  "Receives disability benefits",
+  "Current smoker",
+  "BMI",
+  "Alcohol misuse",
+  "Drug misuse",
+  "Diabetes",
+  "Cardiovascular disorder",
+  "Hypertension",
+  "Chronic pulmonary disease",
+  "Anxiety or depression diagnosis",
+  "Back and/or neck pain diagnosis",
+  "General pain diagnosis",
+  "Limb/extremity pain, joint pain and/or arthritic disorders diagnosis",
+  "Neuropathy diagnosis",
+  "Abdominal and/or bowel pain diagnosis",
+  "Musculoskeletal chest pain diagnosis",
+  "Urogenital, pelvic and menstrual pain diagnosis",
+  "Headache diagnosis",
+  "Other painful condition diagnosis",
+  "Orofacial, ear, and/or temporomandibular disorder pain diagnosis",
+  "Fibromyalgia diagnosis",
+  "Average morphine milligram equivalents (MME) dose per day",
+  "Benzodiazepine dispensed in 6 months prior to randomization"
+)
+
+
+# ====================================================
+# Create bar plot to visualize impact of variable exclusion
+# ====================================================
+
 data_12_cov$AGE_scale <- scale(data_12_cov$AGE)
 data_12_cov$BMI_scale <- scale(data_12_cov$BMI)
 data_12_cov$BL_avg_daily_scale <- scale(data_12_cov$BL_avg_daily)
@@ -203,7 +236,7 @@ data_12_cov$BL_avg_daily_scale <- scale(data_12_cov$BL_avg_daily)
 # ====================================================
 # Fit full model including all covariates with a random effect for clusters
 # ====================================================
-model_full_spline_scaled <- lmer(
+full_model <- lmer(
   PEGS ~ INTERVENTION * (ns(AGE_scale, df = 4) + ns(BMI_scale, df = 4) + ns(BL_avg_daily_scale, df = 4) +
                            FEMALE + disable + Current_Smoke +
                            Alcohol_Abuse + Drug_Abuse + Diabetes +
@@ -214,46 +247,14 @@ model_full_spline_scaled <- lmer(
   data = data_12_cov
 )
 
-# Extract fixed effects and treatment effect estimates
-fixed_effects <- fixef(model_full_spline_scaled)
-intervention_effects <- fixed_effects[grep("INTERVENTION", names(fixed_effects))]
 
-# Construct model matrix for covariates
-X_mat <- model.matrix(~ ns(AGE_scale, df = 4) + ns(BMI_scale, df = 4) + ns(BL_avg_daily_scale, df = 4) +
-                        FEMALE + disable + Current_Smoke +
-                        Alcohol_Abuse + Drug_Abuse + Diabetes +
-                        CVD + Hypertension + Pulmonary + Dep_OR_Anx +
-                        pain1 + pain2 + pain3 + pain4 + pain5 + pain6 +
-                        pain7 + pain8 + pain9 + pain10 + pain11 + BL_benzo_flag,
-                      data = data_12_cov)
 
-# Compute the full model's estimated treatment effect
-full_treatment_effect <- mean(X_mat %*% intervention_effects)
+# Compute full CATE estimates
+data_12_cov$tau_hat <- predict(full_model, newdata = transform(data_12_cov, INTERVENTION = 1)) -
+  predict(full_model, newdata = transform(data_12_cov, INTERVENTION = 0))
 
-# ====================================================
-# Function to construct a reduced model formula excluding a covariate
-# ====================================================
-build_reduced_formula <- function(excluded_var, continuous_vars, categorical_vars, model_matrix = FALSE) {
-  continuous_terms <- sapply(
-    continuous_vars,
-    function(var) if (var == excluded_var) NULL else paste0("ns(", var, ", df = 4)")
-  )
-  categorical_terms <- sapply(
-    categorical_vars,
-    function(var) if (var == excluded_var) NULL else var
-  )
-  terms <- paste(c(continuous_terms, categorical_terms)[!sapply(c(continuous_terms, categorical_terms), is.null)], collapse = " + ")
+var_full <- var(data_12_cov$tau_hat)
 
-  if (!model_matrix) {
-    return(as.formula(paste("PEGS ~ INTERVENTION * (", terms, ") + (1 | CLUST)")))
-  } else {
-    return(as.formula(paste(" ~ ", terms)))
-  }
-}
-
-# ====================================================
-# Define covariates and separate into continuous and categorical groups
-# ====================================================
 covariates <- c("AGE_scale", "FEMALE", "disable", "Current_Smoke", "BMI_scale",
                 "Alcohol_Abuse", "Drug_Abuse", "Diabetes", "CVD",
                 "Hypertension", "Pulmonary", "Dep_OR_Anx",
@@ -262,87 +263,64 @@ covariates <- c("AGE_scale", "FEMALE", "disable", "Current_Smoke", "BMI_scale",
 continuous_vars <- paste0(c("AGE", "BMI", "BL_avg_daily"), "_scale")
 categorical_vars <- setdiff(covariates, continuous_vars)
 
-# Store treatment effects for reduced models
-results <- data.frame(Covariate = covariates, Delta = NA)
 
-# ====================================================
-# Loop through each covariate to fit reduced models
-# ====================================================
-for (covariate in covariates) {
-  # Build the reduced formula
-  reduced_formula <- build_reduced_formula(
-    excluded_var = covariate,
-    continuous_vars = continuous_vars,
-    categorical_vars = categorical_vars
+
+# Function to compute individual TE-VIM values
+compute_individual_TE_VIM <- function(covariate, data) {
+  continuous_terms <- sapply(
+    continuous_vars,
+    function(var) if (var == covariate) NULL else paste0("ns(", var, ", df = 4)")
   )
-
-  # Build the reduced model matrix formula
-  model_matrix_reduced_formula <- build_reduced_formula(
-    excluded_var = covariate,
-    continuous_vars = continuous_vars,
-    categorical_vars = categorical_vars,
-    model_matrix = TRUE
+  categorical_terms <- sapply(
+    categorical_vars,
+    function(var) if (var == covariate) NULL else var
   )
-
-  # Fit the reduced model
-  reduced_model <- lmer(reduced_formula, data = data_12_cov)
-
-  # Construct model matrix for the reduced model
-  X_mat = model.matrix(model_matrix_reduced_formula, data = data_12_cov)
-
-  # Extract fixed effects and treatment effect estimates
-  fixed_effects <- fixef(reduced_model)
-  intervention_effects <- fixed_effects[grep("INTERVENTION", names(fixed_effects))]
-
-  # Store results
-  results$Delta[results$Covariate == covariate] <- mean(X_mat %*% intervention_effects)
+  
+  reduced_covariates <- paste(c(continuous_terms, categorical_terms)[!sapply(c(continuous_terms, categorical_terms), is.null)], collapse = " + ")
+  
+  reduced_formula <- as.formula(
+    paste("tau_hat ~", paste(reduced_covariates, collapse = " + "), "+ (1|CLUST)")
+  )                   
+  
+  reduced_model <- lmer(reduced_formula, data = data)
+  
+  # Estimate tau_s(X) using reduced model
+  data$tau_s_hat <- predict(reduced_model, newdata = data)
+  
+  # Compute individual TE-VIM values
+  te_vim_individual <- (data$tau_hat - data$tau_s_hat)^2
+  
+  return(te_vim_individual)
 }
 
-# ====================================================
-# Compute percent difference in treatment effect estimation
-# ====================================================
-results$Original_Delta <- full_treatment_effect
-results$Diff <- results$Original_Delta - results$Delta
-results$Percent_Difference <- (results$Original_Delta - results$Delta) / results$Original_Delta * 100
+# Compute individual TE-VIM values for each covariate
+individual_te_vim_list <- lapply(covariates, compute_individual_TE_VIM, data = data_12_cov)
 
-# Sort results by percent difference in descending order
-results_sorted <- results %>%
-  arrange(desc(abs(Percent_Difference)))
+# Combine into a data frame
+individual_te_vim_df <- do.call(cbind, individual_te_vim_list)
+colnames(individual_te_vim_df) <- cov_names
 
-# Transform data for visualization
-results_sorted_long <- results_sorted %>%
-  pivot_longer(cols = c(Delta), names_to = "Type", values_to = "Delta")
+# Convert to long format for ggplot
+individual_te_vim_long <- pivot_longer(as.data.frame(individual_te_vim_df), cols = everything(), names_to = "Covariate", values_to = "TE_VIM")
 
-results_sorted_long$Covariate <- factor(results_sorted_long$Covariate,
-                                        levels = covariates,
-                                        labels = cov_names)
+# Compute median TE-VIM for sorting
+te_vim_median <- individual_te_vim_long %>%
+  group_by(Covariate) %>%
+  dplyr::summarise(Median_TE_VIM = median(TE_VIM, na.rm = TRUE)) %>%
+  arrange(Median_TE_VIM)
 
-results_sorted$Covariate <- factor(results_sorted$Covariate,
-                                   levels = covariates,
-                                   labels = cov_names)
+individual_te_vim_long$Covariate <- factor(individual_te_vim_long$Covariate, levels = te_vim_median$Covariate)
 
-# ====================================================
-# Create bar plot to visualize impact of variable exclusion
-# ====================================================
-ggplot(results_sorted_long, aes(x = reorder(Covariate, Delta), y = Delta)) +
-  geom_bar(stat = "identity", position = "dodge", width = 0.7) +
-  geom_hline(yintercept = full_treatment_effect, linetype = "dashed", color = "gray", size = 0.8) +
-  geom_text(
-    aes(label = sprintf("%.1f%%", results_sorted$Percent_Difference[match(Covariate, results_sorted$Covariate)]),
-        y = 0.02),  # Offset text above bars
-    position = position_dodge(width = 0.7),
-    vjust = 0.5,
-    size = 3
-  ) +
-  labs(
-    title = "Impact of Variable Exclusion on Estimated Treatment Effect",
-    subtitle = sprintf("Estimated Average Treatment Effect Using All Variables: %.2f (Dashed Gray Line)", full_treatment_effect),
-    y = "Estimated Leave-One-Out Average Treatment Effect",
-    x = ""
-  ) +
-  scale_fill_manual(values = c("blue")) +
-  theme_minimal() +
-  coord_flip() +
-  theme(legend.position = "none")
-
+# Create box plot
+ggplot(individual_te_vim_long, aes(y = Covariate, x = TE_VIM)) +
+  geom_boxplot(outlier.shape=NA, fill = "white", color = "black") +  # Boxplot without outliers
+  # geom_jitter(width = 0.1, alpha = 0.3, color = "black") +  # Jittered points for better visualization
+  geom_vline(xintercept = 0, linetype = "dashed", color = "gray") +  # Reference line at zero
+  theme_minimal(base_size = 14) +
+  coord_cartesian(xlim = c(0, 0.36)) +  # Display only x-axis range [0, 0.36] while keeping full data
+  labs(title = "LOO TE-VIM Distribution Across Covariates",
+       x = "LOO TE-VIM Estimate", y = "Covariate") +
+  theme(panel.grid.major.y = element_blank(),  # Remove horizontal gridlines
+        panel.grid.minor = element_blank(),
+        axis.text.y = element_text(face = "bold"))
 
